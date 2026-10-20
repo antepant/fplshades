@@ -1,0 +1,91 @@
+name: Update site
+
+# Wakes up every 30 minutes. The "check" job asks fetch/should_update.py whether an update is
+# due (before each gameweek's first kickoff, and a couple of hours after its last game) and
+# finishes in seconds when it isn't. "Run workflow" in the Actions tab updates right away.
+on:
+  schedule:
+    - cron: "13,43 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Update now, even if no gameweek update is due"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-site
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      kind: ${{ steps.gate.outputs.kind }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: fetch/should_update.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Is an update due?
+        id: gate
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          # The live site's meta.json says when it was last updated.
+          # Set the repository variable SITE_URL if you use a custom domain.
+          SITE_META_URL: ${{ vars.SITE_URL || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}/data/meta.json
+        run: python fetch/should_update.py
+
+  update:
+    needs: check
+    if: needs.check.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Finished gameweeks (FPL) and matches (Understat) never change; keep them between runs
+      - name: Restore fetch cache
+        uses: actions/cache@v4
+        with:
+          path: fetch/cache
+          key: fetch-cache-${{ github.run_id }}
+          restore-keys: fetch-cache-
+
+      - name: Fetch data
+        run: python fetch/fetch_data.py
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      # GitHub switches off scheduled workflows after 60 days without commits. Re-enabling the
+      # workflow through the API counts as activity, so the timer never runs out mid-season.
+      - name: Keep the schedule alive
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/update-site.yml/enable"

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FPL Shades</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' rx='1' fill='%232a78d6'/%3E%3Crect x='9' y='1' width='6' height='6' rx='1' fill='%23b7d3f6'/%3E%3Crect x='1' y='9' width='6' height='6' rx='1' fill='%23f0b7b6'/%3E%3Crect x='9' y='9' width='6' height='6' rx='1' fill='%23e34948'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">FPL <span>Shades</span></div>
+    <nav class="tabs" aria-label="Views">
+      <a href="#players" data-view="players">Players</a>
+      <a href="#ticker" data-view="ticker">Ticker</a>
+      <a href="#schedule" data-view="schedule">Schedule</a>
+      <a href="#teams" data-view="teams">Teams</a>
+    </nav>
+    <div class="meta" id="meta"></div>
+    <button class="theme-btn" id="themeBtn" type="button" title="Switch light/dark theme" aria-label="Switch light/dark theme">◐</button>
+  </header>
+
+  <main id="main">
+    <p class="loading">Loading data…</p>
+  </main>
+
+  <dialog id="panel"><div id="panelBody"></div></dialog>
+  <div id="tip" role="tooltip" hidden></div>
+
+  <footer class="foot">
+    Data from the official Fantasy Premier League API. Team xG for a fixture is the sum of its players' xG.
+    Shots, shot locations, positions and creation stats from <a href="https://understat.com" target="_blank" rel="noopener">Understat</a>.
+    Not affiliated with the Premier League.
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+site/data/
+fetch/cache/
+__pycache__/
+.claude/
+terrier_README.md
+*.zip
