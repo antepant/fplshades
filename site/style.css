@@ -243,3 +243,12 @@ td.sched .opp { font-weight: 600; font-size: 12.5px; display: block; }
 svg.pitch { width: 100%; height: auto; display: block; }
 #shotSec .maps .chart:nth-child(2) svg.pitch { max-width: 240px; }
 @media (max-width: 720px) { .maps, #teamShots .maps { grid-template-columns: 1fr; } }
+
+/* ticker: value-only cells; home games get a corner marker in the cell's ink colour */
+.cell.tval { position: relative; min-width: 50px; padding: 7px 6px; }
+.cell.tval.home::before {
+  content: ""; position: absolute; top: 0; left: 0;
+  border-top: 9px solid currentColor; border-right: 9px solid transparent;
+  border-top-left-radius: 5px; opacity: .75;
+}
+.legend .legend-home { display: inline-block; padding: 2px 8px 2px 14px; background: var(--mid); color: var(--text); }

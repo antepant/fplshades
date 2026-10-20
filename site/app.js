@@ -624,7 +624,7 @@ function renderTicker() {
   const startOpts = []; for (let g = 1; g <= 38; g++) startOpts.push([g, `GW${g}${g === D.startGw ? " (next)" : ""}`]);
   main.innerHTML = `
     <h1>Fixture ticker</h1>
-    <p class="lede">Each cell is a fixture (upper case = home, lower case = away). The number is ${what}${!isFdr && st.adj ? ", adjusted for home and away" : ""}. <b style="color:var(--accent-ink)">Blue</b> is a good fixture for this team's ${st.stat === "def" ? "defenders and keeper" : isFdr ? "players" : "attackers"}, <b style="color:var(--bad)">red</b> a bad one.</p>
+    <p class="lede">Each cell is a fixture; a corner marker means a home game, and hovering shows the opponent. The number is ${what}${!isFdr && st.adj ? ", adjusted for home and away" : ""}. <b style="color:var(--accent-ink)">Blue</b> is a good fixture for this team's ${st.stat === "def" ? "defenders and keeper" : isFdr ? "players" : "attackers"}, <b style="color:var(--bad)">red</b> a bad one.</p>
     <div class="controls">
       <div class="ctl"><span class="lbl">For</span>${seg("stat", [["att", "Attack"], ["def", "Defence"], ["fdr", "FPL FDR"]], st.stat)}</div>
       ${isFdr ? "" : `
@@ -643,21 +643,22 @@ function renderTicker() {
       <tbody>${rows.map((r) => `<tr>
         <td class="l sticky"><b>${esc(r.t.name)}</b></td>
         ${ownCols.map((c) => `<td>${f2(ownVal(r, c.key))}</td>`).join("")}
-        ${r.cells.map((cs, i) => `<td class="heat${i === 0 ? " sep" : ""}">${cs.length ? `<div class="cellbox">${cs.map((c) => `<div class="cell${cs.length > 1 ? " dgw" : ""}" style="${heat(tOf(c.v))}" data-tip="${esc(cellTip(st, r.t, c, rates))}"><span class="opp">${short(c.opp, c.home)}</span><span class="val">${isFdr ? c.v : f2(c.v)}</span></div>`).join("")}</div>` : `<div class="cell blank" data-tip="GW${gws[i]}: no fixture (blank)">–</div>`}</td>`).join("")}
+        ${r.cells.map((cs, i) => `<td class="heat${i === 0 ? " sep" : ""}">${cs.length ? `<div class="cellbox">${cs.map((c) => `<div class="cell tval${cs.length > 1 ? " dgw" : ""}${c.home ? " home" : ""}" style="${heat(tOf(c.v))}" data-tip="${esc(cellTip(st, r.t, c, rates))}" aria-label="${c.home ? "Home" : "Away"} vs ${esc(D.team[c.opp].name)}: ${isFdr ? c.v : f2(c.v)}"><span class="opp">${isFdr ? c.v : f2(c.v)}</span></div>`).join("")}</div>` : `<div class="cell blank" data-tip="GW${gws[i]}: no fixture (blank)">–</div>`}</td>`).join("")}
         <td class="sep">${r.n}</td>
         <td class="heat"><div class="cell" style="${r.total == null ? "" : heat(clamp((r.total - tMu) / tSd / 2, -1, 1) * totalGood)}"><span class="opp">${r.total == null ? "–" : f2(r.total)}</span></div></td>
       </tr>`).join("")}</tbody>
     </table></div>
     <div class="legend"><span>Worse</span><span class="ramp">${[-1, -0.6, -0.25, 0, 0.25, 0.6, 1].map((t) => `<i style="${heat(t)}"></i>`).join("")}</span><span>Better</span>
-      <span style="margin-left:14px" class="cell dgw" >&nbsp;outline = double gameweek&nbsp;</span>
+      <span style="margin-left:14px" class="cell tval home legend-home">home game</span>
+      <span class="cell dgw" >&nbsp;outline = double gameweek&nbsp;</span>
       <span class="cell blank" style="padding:2px 8px">blank gameweek</span></div>
     <p class="note">${isFdr ? "FDR is set by the Premier League and changes rarely." : `Form uses each team's last ${st.period || "all"} finished ${st.period ? "games" : "games this season"}. Colours compare each cell with all the cells shown. ${st.adj ? `Home/away factors from ${D.league.n} games this season: home ×${D.league[st.measure].home.toFixed(2)}, away ×${D.league[st.measure].away.toFixed(2)}.` : ""} Short form periods are noisy, especially early in the season.`}</p>`;
   bindControls(main, st, "ticker", renderTicker);
   bindSort($("#tTable"), st, "ticker", renderTicker, (k) => (k === "team" ? 1 : -1));
 }
 function cellTip(st, team, c, rates) {
-  const f = c.fx, opp = D.team[c.opp];
-  const head = `<b>${esc(team.short)} ${c.home ? "vs" : "@"} ${esc(opp.name)}</b> · GW${c.gw}<br>${fmtDate(f.ko)} ${fmtTime(f.ko)} · FDR ${c.fdr}`;
+  const opp = D.team[c.opp];
+  const head = `<b>${esc(team.short)} ${c.home ? "vs" : "@"} ${esc(opp.name)}</b> (${c.home ? "home" : "away"}) · GW${c.gw}<br>FDR ${c.fdr}`;
   if (st.stat === "fdr") return head;
   const x = st.measure === "xg", L = D.league[st.measure], O = rates[c.opp], T = rates[team.id];
   const m = x ? "xG" : "G";
