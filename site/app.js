@@ -78,14 +78,14 @@ async function load() {
   }
   D.unscheduled = fixtures.filter((f) => !f.gw);
 
-  // League venue factors, from every finished fixture this season
+  // League scoring per game overall and by venue, from every finished fixture this season
   const fin = fixtures.filter((f) => f.fin && f.xh != null);
   const n = fin.length || 1;
   const hx = sum(fin.map((f) => f.xh)) / n, ax = sum(fin.map((f) => f.xa)) / n;
   const hg = sum(fin.map((f) => f.hs)) / n, ag = sum(fin.map((f) => f.as)) / n;
   D.league = {
-    xg: { mean: (hx + ax) / 2 || 1.35, home: hx / ((hx + ax) / 2) || 1, away: ax / ((hx + ax) / 2) || 1 },
-    g: { mean: (hg + ag) / 2 || 1.35, home: hg / ((hg + ag) / 2) || 1, away: ag / ((hg + ag) / 2) || 1 },
+    xg: { mean: (hx + ax) / 2 || 1.35, home: hx || 1.45, away: ax || 1.25 },
+    g: { mean: (hg + ag) / 2 || 1.35, home: hg || 1.45, away: ag || 1.25 },
     n: fin.length,
   };
 }
@@ -104,8 +104,11 @@ function teamRates(teamId, n, venue = "all") {
     w: g.filter((x) => x.gf > x.ga).length, d: g.filter((x) => x.gf === x.ga).length,
     l: g.filter((x) => x.gf < x.ga).length, cs: g.filter((x) => x.ga === 0).length,
   };
+  // With no games yet, fall back to the league average for that venue
   const pg = (v, m) => (gp ? v / gp : m);
-  return { ...tot, gfpg: pg(tot.gf, D.league.g.mean), gapg: pg(tot.ga, D.league.g.mean), xgfpg: pg(tot.xgf, D.league.xg.mean), xgapg: pg(tot.xga, D.league.xg.mean) };
+  const fb = (L, side) => (venue === "all" ? L.mean : L[side]);
+  const us = venue === "away" ? "away" : "home", them = venue === "away" ? "home" : "away";
+  return { ...tot, venue, gfpg: pg(tot.gf, fb(D.league.g, us)), gapg: pg(tot.ga, fb(D.league.g, them)), xgfpg: pg(tot.xgf, fb(D.league.xg, us)), xgapg: pg(tot.xga, fb(D.league.xg, them)) };
 }
 
 // ---------------------------------------------------------------- tooltip
@@ -537,16 +540,23 @@ async function renderTeamShots(tid) {
 // ---------------------------------------------------------------- TICKER
 const T_DEF = { stat: "att", model: "matchup", measure: "xg", period: 6, start: 0, horizon: 6, adj: true, sort: "total", dir: -1 };
 
-function tickerValue(st, team, opp, home, rates) {
+/** The rates a fixture is built from. With home/away on, the team's own home (or away) games
+ *  meet the opponent's away (or home) games, against the league average for that venue. */
+function fixtureRates(st, team, opp, home, rates) {
   const L = D.league[st.measure];
-  const T = rates[team], O = rates[opp];
-  const fUs = st.adj ? (home ? L.home : L.away) : 1;     // venue factor for our scoring
-  const fThem = st.adj ? (home ? L.away : L.home) : 1;   // venue factor for their scoring
+  if (!st.adj) return { T: rates.all[team], O: rates.all[opp], baseUs: L.mean, baseThem: L.mean };
+  return {
+    T: rates[home ? "home" : "away"][team], O: rates[home ? "away" : "home"][opp],
+    baseUs: home ? L.home : L.away, baseThem: home ? L.away : L.home,
+  };
+}
+function tickerValue(st, team, opp, home, rates) {
+  const { T, O, baseUs, baseThem } = fixtureRates(st, team, opp, home, rates);
   const x = st.measure === "xg";
   const oppConc = x ? O.xgapg : O.gapg, oppScore = x ? O.xgfpg : O.gfpg;
   const ourScore = x ? T.xgfpg : T.gfpg, ourConc = x ? T.xgapg : T.gapg;
-  if (st.stat === "att") return st.model === "matchup" ? (ourScore * oppConc / L.mean) * fUs : oppConc * fUs;
-  return st.model === "matchup" ? (oppScore * ourConc / L.mean) * fThem : oppScore * fThem;
+  if (st.stat === "att") return st.model === "matchup" ? ourScore * oppConc / baseUs : oppConc;
+  return st.model === "matchup" ? oppScore * ourConc / baseThem : oppScore;
 }
 
 function renderTicker() {
@@ -555,7 +565,8 @@ function renderTicker() {
   const end = Math.min(38, start + st.horizon - 1);
   const gws = []; for (let g = start; g <= end; g++) gws.push(g);
   const isFdr = st.stat === "fdr";
-  const rates = Object.fromEntries(D.teams.map((t) => [t.id, teamRates(t.id, st.period)]));
+  const byVenue = (v) => Object.fromEntries(D.teams.map((t) => [t.id, teamRates(t.id, st.period, v)]));
+  const rates = { all: byVenue("all"), home: byVenue("home"), away: byVenue("away") };
   const good = isFdr || st.stat === "def" ? -1 : 1; // direction in which a higher number is better
   const mLabel = st.measure === "xg" ? "xG" : "goals";
 
@@ -571,7 +582,7 @@ function renderTicker() {
     if (isFdr) total = avg;
     else if (st.stat === "att") total = sum(all.map((c) => c.v));
     else total = st.model === "matchup" ? sum(all.map((c) => Math.exp(-c.v))) : avg;
-    return { t, cells, n, avg, total, r: rates[t.id] };
+    return { t, cells, n, avg, total, r: rates.all[t.id] };
   });
   const vals = rows.flatMap((r) => r.cells.flat().map((c) => c.v));
   const mu = vals.length ? sum(vals) / vals.length : 0;
@@ -624,7 +635,7 @@ function renderTicker() {
   const startOpts = []; for (let g = 1; g <= 38; g++) startOpts.push([g, `GW${g}${g === D.startGw ? " (next)" : ""}`]);
   main.innerHTML = `
     <h1>Fixture ticker</h1>
-    <p class="lede">Each cell is a fixture; a corner marker means a home game, and hovering shows the opponent. The number is ${what}${!isFdr && st.adj ? ", adjusted for home and away" : ""}. <b style="color:var(--accent-ink)">Blue</b> is a good fixture for this team's ${st.stat === "def" ? "defenders and keeper" : isFdr ? "players" : "attackers"}, <b style="color:var(--bad)">red</b> a bad one.</p>
+    <p class="lede">Each cell is a fixture; a corner marker means a home game, and hovering shows the opponent. The number is ${what}${!isFdr && st.adj ? ", using home games for the home side and away games for the away side" : ""}. <b style="color:var(--accent-ink)">Blue</b> is a good fixture for this team's ${st.stat === "def" ? "defenders and keeper" : isFdr ? "players" : "attackers"}, <b style="color:var(--bad)">red</b> a bad one.</p>
     <div class="controls">
       <div class="ctl"><span class="lbl">For</span>${seg("stat", [["att", "Attack"], ["def", "Defence"], ["fdr", "FPL FDR"]], st.stat)}</div>
       ${isFdr ? "" : `
@@ -633,7 +644,7 @@ function renderTicker() {
       <div class="ctl"><span class="lbl">Form period</span>${seg("period", periodOpts, st.period)}</div>`}
       <div class="ctl"><span class="lbl">From</span>${selectEl("start", startOpts, start)}</div>
       <div class="ctl"><span class="lbl">Gameweeks</span>${selectEl("horizon", [1, 2, 3, 4, 5, 6, 8, 10, 12].map((h) => [h, h]), st.horizon)}</div>
-      ${isFdr ? "" : `<label class="check"><input type="checkbox" data-chk="adj" ${st.adj ? "checked" : ""}> Adjust for home/away</label>`}
+      ${isFdr ? "" : `<label class="check"><input type="checkbox" data-chk="adj" ${st.adj ? "checked" : ""}> Home/away form</label>`}
     </div>
     <div class="tablewrap"><table class="grid" id="tTable">
       <thead><tr>${sortHeader([{ key: "team", label: "Team", cls: "l sticky" }, ...ownCols], st)}
@@ -652,7 +663,7 @@ function renderTicker() {
       <span style="margin-left:14px" class="cell tval home legend-home">home game</span>
       <span class="cell dgw" >&nbsp;outline = double gameweek&nbsp;</span>
       <span class="cell blank" style="padding:2px 8px">blank gameweek</span></div>
-    <p class="note">${isFdr ? "FDR is set by the Premier League and changes rarely." : `Form uses each team's last ${st.period || "all"} finished ${st.period ? "games" : "games this season"}. Colours compare each cell with all the cells shown. ${st.adj ? `Home/away factors from ${D.league.n} games this season: home ×${D.league[st.measure].home.toFixed(2)}, away ×${D.league[st.measure].away.toFixed(2)}.` : ""} Short form periods are noisy, especially early in the season.`}</p>`;
+    <p class="note">${isFdr ? "FDR is set by the Premier League and changes rarely." : `${st.adj ? `Home/away form is on: each fixture uses the team's ${st.period ? `last ${st.period} home games` : "home games this season"} when it plays at home (away games when away) and the opponent's games at the other venue. ${st.model === "matchup" ? `Projections divide by the league average for that venue this season (home ${f2(D.league[st.measure].home)}, away ${f2(D.league[st.measure].away)} ${mLabel} per game, from ${D.league.n} games).` : ""} Home or away alone is half the games, so it's noisier, especially early in the season.` : `Form uses each team's last ${st.period || "all"} finished ${st.period ? "games" : "games this season"}, home and away together. Short form periods are noisy, especially early in the season.`} Colours compare each cell with all the cells shown. The xGF/g and xGA/g columns use all games.`}</p>`;
   bindControls(main, st, "ticker", renderTicker);
   bindSort($("#tTable"), st, "ticker", renderTicker, (k) => (k === "team" ? 1 : -1));
 }
@@ -660,13 +671,16 @@ function cellTip(st, team, c, rates) {
   const opp = D.team[c.opp];
   const head = `<b>${esc(team.short)} ${c.home ? "vs" : "@"} ${esc(opp.name)}</b> (${c.home ? "home" : "away"}) · GW${c.gw}<br>FDR ${c.fdr}`;
   if (st.stat === "fdr") return head;
-  const x = st.measure === "xg", L = D.league[st.measure], O = rates[c.opp], T = rates[team.id];
-  const m = x ? "xG" : "G";
+  const x = st.measure === "xg", m = x ? "xG" : "G";
+  const { T, O, baseUs, baseThem } = fixtureRates(st, team.id, c.opp, c.home, rates);
+  const where = (r) => (r.venue === "all" ? `in ${r.gp} games` : `in ${r.gp} ${r.venue} game${r.gp === 1 ? "" : "s"}`);
   const lines = st.stat === "att"
-    ? [`${opp.short} conceded ${f2(x ? O.xgapg : O.gapg)} ${m}/g`, st.model === "matchup" ? `${team.short} scored ${f2(x ? T.xgfpg : T.gfpg)} ${m}/g` : ""]
-    : [`${opp.short} scored ${f2(x ? O.xgfpg : O.gfpg)} ${m}/g`, st.model === "matchup" ? `${team.short} conceded ${f2(x ? T.xgapg : T.gapg)} ${m}/g` : ""];
+    ? [`${opp.short} conceded ${f2(x ? O.xgapg : O.gapg)} ${m}/g ${where(O)}`, st.model === "matchup" ? `${team.short} scored ${f2(x ? T.xgfpg : T.gfpg)} ${m}/g ${where(T)}` : ""]
+    : [`${opp.short} scored ${f2(x ? O.xgfpg : O.gfpg)} ${m}/g ${where(O)}`, st.model === "matchup" ? `${team.short} conceded ${f2(x ? T.xgapg : T.gapg)} ${m}/g ${where(T)}` : ""];
+  const base = st.stat === "att" ? baseUs : baseThem;
+  const baseLabel = !st.adj ? "League avg" : `League avg ${(st.stat === "att") === c.home ? "home" : "away"} team`;
   const cs = st.stat === "def" && st.model === "matchup" ? `<br>Clean sheet chance ≈ ${Math.round(Math.exp(-c.v) * 100)}%` : "";
-  return `${head}<br>${lines.filter(Boolean).join("<br>")}${st.model === "matchup" ? `<br>League avg ${f2(L.mean)} ${m}/g` : ""}<br><b>${st.model === "matchup" ? "Projected" : "Value"}: ${f2(c.v)}</b>${cs}`;
+  return `${head}<br>${lines.filter(Boolean).join("<br>")}${st.model === "matchup" ? `<br>${baseLabel} ${f2(base)} ${m}/g` : ""}<br><b>${st.model === "matchup" ? "Projected" : "Value"}: ${f2(c.v)}</b>${cs}`;
 }
 
 // ---------------------------------------------------------------- SCHEDULE
