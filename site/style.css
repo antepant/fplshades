@@ -252,3 +252,6 @@ svg.pitch { width: 100%; height: auto; display: block; }
   border-top-left-radius: 5px; opacity: .75;
 }
 .legend .legend-home { display: inline-block; padding: 2px 8px 2px 14px; background: var(--mid); color: var(--text); }
+
+/* ticker tooltip: the games behind each rate */
+#tip .tg { display: block; margin: 2px 0 5px 10px; font-size: 11.5px; opacity: .85; font-variant-numeric: tabular-nums; }

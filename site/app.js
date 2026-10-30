@@ -108,7 +108,7 @@ function teamRates(teamId, n, venue = "all") {
   const pg = (v, m) => (gp ? v / gp : m);
   const fb = (L, side) => (venue === "all" ? L.mean : L[side]);
   const us = venue === "away" ? "away" : "home", them = venue === "away" ? "home" : "away";
-  return { ...tot, venue, gfpg: pg(tot.gf, fb(D.league.g, us)), gapg: pg(tot.ga, fb(D.league.g, them)), xgfpg: pg(tot.xgf, fb(D.league.xg, us)), xgapg: pg(tot.xga, fb(D.league.xg, them)) };
+  return { ...tot, venue, games: g, gfpg: pg(tot.gf, fb(D.league.g, us)), gapg: pg(tot.ga, fb(D.league.g, them)), xgfpg: pg(tot.xgf, fb(D.league.xg, us)), xgapg: pg(tot.xga, fb(D.league.xg, them)) };
 }
 
 // ---------------------------------------------------------------- tooltip
@@ -674,9 +674,12 @@ function cellTip(st, team, c, rates) {
   const x = st.measure === "xg", m = x ? "xG" : "G";
   const { T, O, baseUs, baseThem } = fixtureRates(st, team.id, c.opp, c.home, rates);
   const where = (r) => (r.venue === "all" ? `in ${r.gp} games` : `in ${r.gp} ${r.venue} game${r.gp === 1 ? "" : "s"}`);
+  // The games behind a rate, newest first, scores and xG from that team's side
+  const games = (r) => r.games.length ? `<span class="tg">${[...r.games].reverse().map((g) =>
+    `GW${g.gw} ${g.home ? "vs" : "@"} ${esc(D.team[g.opp].short)} <b>${g.gf}–${g.ga}</b>${g.xgf != null ? ` · xG ${f2(g.xgf)}–${f2(g.xga)}` : ""}`).join("<br>")}</span>` : "";
   const lines = st.stat === "att"
-    ? [`${opp.short} conceded ${f2(x ? O.xgapg : O.gapg)} ${m}/g ${where(O)}`, st.model === "matchup" ? `${team.short} scored ${f2(x ? T.xgfpg : T.gfpg)} ${m}/g ${where(T)}` : ""]
-    : [`${opp.short} scored ${f2(x ? O.xgfpg : O.gfpg)} ${m}/g ${where(O)}`, st.model === "matchup" ? `${team.short} conceded ${f2(x ? T.xgapg : T.gapg)} ${m}/g ${where(T)}` : ""];
+    ? [`${opp.short} conceded ${f2(x ? O.xgapg : O.gapg)} ${m}/g ${where(O)}${games(O)}`, st.model === "matchup" ? `${team.short} scored ${f2(x ? T.xgfpg : T.gfpg)} ${m}/g ${where(T)}${games(T)}` : ""]
+    : [`${opp.short} scored ${f2(x ? O.xgfpg : O.gfpg)} ${m}/g ${where(O)}${games(O)}`, st.model === "matchup" ? `${team.short} conceded ${f2(x ? T.xgapg : T.gapg)} ${m}/g ${where(T)}${games(T)}` : ""];
   const base = st.stat === "att" ? baseUs : baseThem;
   const baseLabel = !st.adj ? "League avg" : `League avg ${(st.stat === "att") === c.home ? "home" : "away"} team`;
   const cs = st.stat === "def" && st.model === "matchup" ? `<br>Clean sheet chance ≈ ${Math.round(Math.exp(-c.v) * 100)}%` : "";
