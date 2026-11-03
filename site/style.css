@@ -232,6 +232,10 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
   input[type="search"] { width: 150px; }
 }
 
+/* defcon hitters in the team panel */
+.dchit { display: inline-block; margin: 1px 12px 1px 0; white-space: nowrap; }
+.dchit .pos { width: auto; margin-right: 4px; }
+
 /* plain schedule cells */
 td.sched { padding: 5px 8px; line-height: 1.25; }
 td.sched .fx + .fx { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--grid); }

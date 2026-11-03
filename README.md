@@ -1,6 +1,6 @@
 # FPL Shades — Fantasy Premier League decision support
 
-A static site with four views:
+A static site with five views:
 
 - **Players**: stats for every player for the season, the last 6 or last 3 gameweeks, or any GW range, as totals or per 90. Columns include points, G/xG, A/xA, GI/xGI, GI−xGI (over/under-performance), xGC, clean sheets, defensive contributions and how often the DC threshold was hit, bonus and BPS, plus the next 5 fixtures. Filter by position, team, max price, minutes and name. Injury/doubt flags show the chance of playing (hover for the news). The **Shooting & creation** column set switches to Understat numbers: shots, shots in the box, npxG, xG per shot, key passes, xA, npxG+xA, xGChain and xGBuildup. Click a player for their gameweek log, points and xG/xA charts, set-piece duties, next 8 fixtures, a **shot map** (shots taken, or shots from their passes, for season / last 6 / last 3, with or without penalties) and a **starting-positions map** (where they lined up in each start).
 - **Ticker**: a fixture matrix (teams × upcoming gameweeks) with stats instead of just team names, like [Ticker shades](https://antepant.shinyapps.io/ticker_shades/). Upper case = home, lower case = away. Choose:
@@ -10,6 +10,7 @@ A static site with four views:
   - The last column is the sum of projected goals (Attack), the expected clean sheets (Defence, team vs opponent: the sum of e^(−projected goals against) per fixture), the average (Defence, opponent only) or the average FDR. Double gameweeks are outlined and count twice; blanks are hatched and count zero.
 - **Schedule**: a plain fixture list for the rest of the season, with the kick-off day under each opponent and counts of double and blank gameweeks. Pick an earlier start to see played games with scores (hover for xG). Fixtures without a date are listed below.
 - **Teams**: games played, W/D/L, points, goals, clean sheets, xGF/xGA/xGD and per-game rates, for the last 3, last 6 or all games, home, away or both. Click a team for its results with xG per game, shot maps for and against, next fixtures and top players by xGI.
+- **Defcons**: which teams players get defensive-contribution points against. Each row is an opponent, with the DC hits per game, the hit rate of 60+ minute appearances and the defensive contributions per 90 of the players facing it, split by position, plus the teams that face it in the next 5 gameweeks. Filter by the opponent's last 3, last 6 or all games, by where the players were (home, away or both) and by position. Click a team for each game and who reached the threshold.
 
 Blue means good for the team, red means bad, everywhere. All columns sort; filters are remembered in the browser.
 

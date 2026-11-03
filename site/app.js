@@ -788,8 +788,139 @@ function openTeam(tid) {
   renderTeamShots(tid);
 }
 
+// ---------------------------------------------------------------- DEFCONS
+// Defensive-contribution points by opponent: each row is a team, the numbers are what the players
+// facing it did. Goalkeepers can't earn DC points, so they're left out.
+const DC_DEF = { period: 0, venue: "all", pos: "ALL", sort: "hitpg", dir: -1 };
+const DC_POS = ["DEF", "MID", "FWD"];
+const DC_COLS = [
+  { key: "gp", label: "GP", title: "Games in the window", dec: 0 },
+  { key: "apps", label: "60+", title: "Player appearances of 60+ minutes against them", dec: 0, cls: "sep" },
+  { key: "hits", label: "Hits", title: "DC hits (+2 points) against them, any minutes", dec: 0 },
+  { key: "hitpg", label: "Hits/g", title: "DC hits per game against them", dec: 2, heat: 1 },
+  { key: "pct", label: "Hit%", title: "Share of 60+ minute appearances against them that reached the DC threshold", dec: 0, heat: 1, pct: true },
+  { key: "dc90", label: "DC/90", title: "Defensive contributions per 90 by the players facing them (CBIT for DEF, CBIRT for MID/FWD)", dec: 1, heat: 1 },
+];
+const DC_POS_COLS = DC_POS.map((p, i) => ({ key: "pct" + p, label: p + " %", title: `Hit% for ${p === "DEF" ? "defenders (10+ CBIT)" : p === "MID" ? "midfielders (12+ CBIRT)" : "forwards (12+ CBIRT)"}`, dec: 0, heat: 1, pct: true, cls: i ? "" : "sep" }));
+
+/** Outfield player rows by fixture, with the side they played on. */
+function rowsByFx() {
+  if (D.byFx) return D.byFx;
+  const fi = D.fi;
+  D.byFx = {};
+  for (const p of D.players) {
+    if (!DC_POS.includes(p.pos)) continue;
+    for (const r of p.log) {
+      const f = D.fx[r[fi.fx]];
+      // The API only gives a player's current club, so games for a club they've since left are skipped
+      if (!f || r[fi.min] <= 0 || (f.h !== p.team && f.a !== p.team)) continue;
+      (D.byFx[f.id] ||= []).push({ p, min: r[fi.min], dc: r[fi.dc], hit: r[fi.dch] });
+    }
+  }
+  return D.byFx;
+}
+
+/** What the players facing `opp` did in its last `n` games. `venue` is where those players were. */
+function dcAgainst(opp, n, venue, pos) {
+  const games = teamRates(opp, n, venue === "home" ? "away" : venue === "away" ? "home" : "all").games;
+  const byFx = rowsByFx();
+  const a = { gp: games.length, apps: 0, hits: 0, min: 0, dc: 0, hits60: 0, by: {}, games: [] };
+  for (const ps of DC_POS) a.by[ps] = { apps: 0, hits: 0 };
+  for (const g of games) {
+    const rows = (byFx[g.fx.id] || []).filter((x) => x.p.team !== opp && (pos === "ALL" || x.p.pos === pos));
+    for (const x of rows) {
+      a.hits += x.hit; a.min += x.min; a.dc += x.dc;
+      if (x.min >= 60) { a.apps++; a.hits60 += x.hit; a.by[x.p.pos].apps++; a.by[x.p.pos].hits += x.hit; }
+    }
+    a.games.push({ g, rows: rows.sort((x, y) => y.hit - x.hit || y.dc - x.dc) });
+  }
+  a.hitpg = a.gp ? a.hits / a.gp : null;
+  a.pct = a.apps ? (a.hits60 / a.apps) * 100 : null;
+  a.dc90 = a.min ? (a.dc / a.min) * 90 : null;
+  for (const ps of DC_POS) a["pct" + ps] = a.by[ps].apps ? (a.by[ps].hits / a.by[ps].apps) * 100 : null;
+  return a;
+}
+
+/** Teams facing `opp` in the next `n` gameweeks; upper case = that team at home. */
+function facingNext(opp, n) {
+  const out = [];
+  for (let gw = D.startGw; gw < D.startGw + n && gw <= 38; gw++) {
+    const fs = D.byTeamGw[opp][gw] || [];
+    if (!fs.length) out.push(`<span class="chip dim" data-tip="GW${gw}: no fixture">–</span>`);
+    for (const f of fs) out.push(`<span class="chip" data-tip="GW${gw}: ${esc(D.team[f.opp].name)} ${f.home ? "away to" : "at home to"} ${esc(D.team[opp].name)}">${short(f.opp, !f.home)}</span>`);
+  }
+  return `<span class="chips">${out.join("")}</span>`;
+}
+
+function renderDefcons() {
+  const st = store.get("defcons", DC_DEF);
+  const cols = [...DC_COLS, ...(st.pos === "ALL" ? DC_POS_COLS : [])];
+  if (st.sort !== "team" && !cols.some((c) => c.key === st.sort)) Object.assign(st, { sort: "hitpg", dir: -1 });
+  const rows = D.teams.map((t) => ({ t, ...dcAgainst(t.id, st.period, st.venue, st.pos) }));
+  const stats = {};
+  for (const c of cols.filter((c) => c.heat)) {
+    const v = rows.map((r) => r[c.key]).filter((x) => x != null);
+    const mu = sum(v) / (v.length || 1);
+    stats[c.key] = { mu, sd: Math.sqrt(sum(v.map((x) => (x - mu) ** 2)) / (v.length || 1)) || 1 };
+  }
+  const kv = (r) => (st.sort === "team" ? r.t.name : r[st.sort] ?? -Infinity);
+  rows.sort((a, b) => { const x = kv(a), y = kv(b); return (typeof x === "string" ? x.localeCompare(y) : x - y) * st.dir; });
+  const who = st.pos === "ALL" ? "outfield players" : { DEF: "defenders", MID: "midfielders", FWD: "forwards" }[st.pos];
+  const where = st.venue === "home" ? " playing at home against them" : st.venue === "away" ? " playing away against them" : " against them";
+  const gamesTip = (r) => r.games.length ? [...r.games].reverse().map(({ g, rows }) =>
+    `GW${g.gw} ${esc(D.team[g.opp].short)} ${g.home ? "away" : "home"}: <b>${rows.filter((x) => x.hit).length}</b> hit${rows.filter((x) => x.hit).length === 1 ? "" : "s"}`).join("<br>") : "No games";
+  const cell = (r, c) => {
+    const v = r[c.key];
+    if (v == null) return `<td class="${c.cls || ""} dim">–</td>`;
+    const style = c.heat ? `style="${heat(clamp((v - stats[c.key].mu) / stats[c.key].sd / 2, -1, 1) * c.heat)}"` : "";
+    const t = c.key === "hitpg" ? `data-tip="${esc(`<b>DC hits by ${who} vs ${r.t.short}</b><br>${gamesTip(r)}`)}"` : "";
+    return `<td class="${c.cls || ""}" ${style} ${t}>${v.toFixed(c.dec)}${c.pct ? "%" : ""}</td>`;
+  };
+  const main = $("#main");
+  main.innerHTML = `
+    <h1>Defcons</h1>
+    <p class="lede">Which teams players get defensive-contribution points against. Each row is a team; the numbers are what ${who}${where} did. <b style="color:var(--accent-ink)">Blue</b> means more defcons than usual for players facing that team. Click a team for each game and who hit the threshold.</p>
+    <div class="controls">
+      <div class="ctl"><span class="lbl">Period</span>${seg("period", [[3, "Last 3"], [6, "Last 6"], [0, "Season"]], st.period)}</div>
+      <div class="ctl"><span class="lbl">Players' venue</span>${seg("venue", [["all", "All"], ["home", "Home"], ["away", "Away"]], st.venue)}</div>
+      <div class="ctl"><span class="lbl">Position</span>${seg("pos", [["ALL", "All"], ["DEF", "DEF"], ["MID", "MID"], ["FWD", "FWD"]], st.pos)}</div>
+    </div>
+    <div class="tablewrap"><table class="grid" id="dcTable">
+      <thead><tr>${sortHeader([{ key: "team", label: "Opponent", cls: "l sticky" }, ...cols, { key: "next", label: "Facing them next", cls: "l sep", sortable: false, title: "Teams that play them in the next 5 gameweeks. Upper case = that team is at home." }], st)}</tr></thead>
+      <tbody>${rows.map((r) => `<tr class="click" data-tid="${r.t.id}"><td class="l sticky"><b>${esc(r.t.name)}</b></td>
+        ${cols.map((c) => cell(r, c)).join("")}
+        <td class="l sep">${facingNext(r.t.id, 5)}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <p class="note">A DC hit is a game where the player reached the defensive-contribution threshold for +2 points: 10 clearances, blocks, interceptions and tackles (CBIT) for defenders, 12 including ball recoveries (CBIRT) for midfielders and forwards. Hit% only counts appearances of 60+ minutes, since short sub appearances rarely get there. Periods are the opponent's last games${st.venue === "all" ? "" : ` at ${st.venue === "home" ? "away" : "home"} (where the players were ${st.venue})`}. Positions are the players' current FPL positions. Players who have changed club since are left out for games at their old club.</p>`;
+  bindControls(main, st, "defcons", renderDefcons);
+  bindSort($("#dcTable"), st, "defcons", renderDefcons, (k) => (k === "team" ? 1 : -1));
+  main.querySelectorAll("tr[data-tid]").forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest(".chip")) openDcTeam(+tr.dataset.tid, st); }));
+}
+
+function openDcTeam(tid, st) {
+  const t = D.team[tid];
+  const a = dcAgainst(tid, st.period, st.venue, st.pos);
+  const pct = (h, n) => (n ? `${Math.round((h / n) * 100)}%` : "–");
+  const hitter = (x) => `<span class="dchit" data-tip="${esc(`${x.p.name} (${x.p.pos}): ${x.dc} ${x.p.pos === "DEF" ? "CBIT" : "CBIRT"} in ${x.min} min`)}"><span class="pos">${x.p.pos}</span>${esc(x.p.name)} <b>${x.dc}</b></span>`;
+  $("#panelBody").innerHTML = `
+    <div class="phead"><div><h2>Defcons against ${esc(t.name)}</h2>
+      <div class="facts"><span>${st.period ? `Last ${st.period}` : "Season"}</span><span>${st.venue === "all" ? "Home and away" : `Players ${st.venue === "home" ? "at home" : "away"}`}</span><span>${st.pos === "ALL" ? "All outfield positions" : st.pos}</span></div></div>
+      <button class="x" type="button" aria-label="Close">×</button></div>
+    <div class="facts"><span><b>${f2(a.hitpg)}</b> hits per game</span>${DC_POS.map((ps) => a.by[ps].apps ? `<span>${ps}: <b>${a.by[ps].hits}</b> of ${a.by[ps].apps} (${pct(a.by[ps].hits, a.by[ps].apps)})</span>` : "").join("")}</div>
+    <div class="psec"><h3>Facing them next</h3>${facingNext(tid, 8)}</div>
+    <div class="psec"><h3>Games</h3><div class="tablewrap"><table class="grid">
+      <thead><tr><th class="l">GW</th><th class="l">Team</th><th>Score</th><th>Hits</th><th>60+</th><th class="l">Players who hit the threshold</th></tr></thead>
+      <tbody>${[...a.games].reverse().map(({ g, rows }) => { const hits = rows.filter((x) => x.hit); return `<tr>
+        <td class="l">${g.gw}</td><td class="l" data-tip="${esc(D.team[g.opp].name)} ${g.home ? "away" : "at home"}">${short(g.opp, !g.home)}</td>
+        <td>${g.ga}–${g.gf}</td><td>${hits.length}</td><td>${rows.filter((x) => x.min >= 60).length}</td>
+        <td class="l">${hits.map(hitter).join("") || `<span class="dim">None</span>`}</td></tr>`; }).join("") || `<tr><td class="l dim" colspan="6">No games in this window.</td></tr>`}</tbody>
+    </table></div><p class="note">Team is the side facing ${esc(t.short)}, upper case = at home. Score is from that team's side; the number after each name is their defensive contributions.</p></div>`;
+  showPanel();
+}
+
 // ---------------------------------------------------------------- router & boot
-const VIEWS = { players: renderPlayers, ticker: renderTicker, schedule: renderSchedule, teams: renderTeams };
+const VIEWS = { players: renderPlayers, ticker: renderTicker, schedule: renderSchedule, teams: renderTeams, defcons: renderDefcons };
 function route() {
   const v = location.hash.slice(1) in VIEWS ? location.hash.slice(1) : "players";
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === v));
