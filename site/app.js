@@ -226,6 +226,11 @@ const P_COLS_US = [
   { key: "xgbu", label: "xGBuildup", title: "xGChain without the shot and the key pass: involvement earlier in the move", dec: 2 },
 ];
 
+/** Min minutes for the current window. Each window keeps its own value, so a season-sized
+ *  threshold doesn't empty the table on Last 3. (Older saves had one `minm`; it becomes the season's.) */
+function minMinutes(st) {
+  return st.minmBy?.[st.win] ?? (st.win === "season" ? st.minm : P_DEF.minm);
+}
 function windowGws(st) {
   const g = D.dataGws;
   if (st.win === "season") return new Set(g);
@@ -269,16 +274,22 @@ function renderPlayers(fast) {
         <div class="ctl"><span class="lbl">Position</span>${seg("pos", [["ALL", "All"], ["GKP", "GK"], ["DEF", "DEF"], ["MID", "MID"], ["FWD", "FWD"]], st.pos)}</div>
         <div class="ctl"><span class="lbl">Team</span>${selectEl("team", [[0, "All teams"], ...[...D.teams].sort((a, b) => a.name.localeCompare(b.name)).map((t) => [t.id, t.name])], st.team)}</div>
         <div class="ctl"><label for="maxp">Max £</label><input id="maxp" type="number" step="0.5" min="3.5" data-inp="maxp" value="${st.maxp}"></div>
-        <div class="ctl"><label for="minm">Min minutes</label><input id="minm" type="number" step="45" min="0" data-inp="minm" value="${st.minm}"></div>
+        <div class="ctl"><label for="minm" data-tip="Remembered separately for each window">Min minutes</label><input id="minm" type="number" step="45" min="0" value="${minMinutes(st)}"></div>
         <div class="ctl"><span class="lbl">Columns</span>${seg("cols", [["fpl", "FPL"], ["us", "Shooting & creation"]], st.cols)}</div>
         <div class="ctl"><span class="lbl">Values</span>${seg("per90", [["false", "Totals"], ["true", "Per 90"]], String(st.per90))}</div>
         <div class="ctl"><label for="q">Search</label><input id="q" type="search" placeholder="Player name" data-inp="q" value="${esc(st.q)}"></div>
       </div>
       <div class="tablewrap"><table class="grid" id="pTable"></table></div>
       <div class="more" id="pMore"></div>
-      <p class="note">Per 90 divides counting stats by minutes played × 90. Players with too few minutes give noisy per-90 numbers, so raise Min minutes when using it. Next 5: official FPL difficulty, upper case = home. Shooting &amp; creation data: <a href="https://understat.com" target="_blank" rel="noopener">Understat</a>.</p>`;
+      <p class="note">Per 90 divides counting stats by minutes played × 90. Players with too few minutes give noisy per-90 numbers, so raise Min minutes when using it. Next 5: official FPL difficulty, upper case = home. Shooting &amp; creation data: <a href="https://understat.com" target="_blank" rel="noopener">Understat</a>.</p>
+      ${st.cols === "us" ? usGapNote(windowGws(st)) : ""}`;
     bindControls(main, st, "players", (f) => renderPlayers(f));
     // seg buttons for per90 send "true"/"false" strings
+    $("#minm").addEventListener("input", (e) => {
+      st.minmBy = { ...st.minmBy, [st.win]: e.target.value === "" ? 0 : +e.target.value };
+      store.set("players", st);
+      renderPlayers(true);
+    });
   }
   const per90 = st.per90 === true || st.per90 === "true";
   const COLS = st.cols === "us" ? P_COLS_US : P_COLS;
@@ -289,7 +300,10 @@ function renderPlayers(fast) {
     .filter((p) => (st.pos === "ALL" || p.pos === st.pos) && (!st.team || p.team === st.team) && (st.maxp === "" || p.price <= st.maxp))
     .filter((p) => !q || (p.name + " " + p.full).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").includes(q))
     .map((p) => ({ p, a: aggPlayer(p, gws) }))
-    .filter((r) => q || (r.a.min >= (st.minm || 0) && r.a.min > 0));
+    .filter((r) => q || r.a.min > 0);
+  const minm = minMinutes(st);
+  const mostMin = Math.max(0, ...rows.map((r) => r.a.min));
+  if (!q) rows = rows.filter((r) => r.a.min >= minm);
   const val = (r, c) => {
     const v = c.key === "name" ? r.p.name : c.key === "team" ? D.team[r.p.team].short : r.a[c.key];
     return per90 && !c.raw && !c.no90 && typeof v === "number" ? (r.a.min ? (v / r.a.min) * 90 : 0) : v;
@@ -308,7 +322,9 @@ function renderPlayers(fast) {
       <td class="l">${D.team[r.p.team].short}</td>
       ${COLS.map((c) => { const v = val(r, c); const dec = per90 && !c.raw && !c.no90 ? 2 : c.dec; return `<td class="${c.cls || ""}">${v === 0 && !c.raw ? `<span class="dim">0</span>` : v.toFixed(dec)}</td>`; }).join("")}
       <td class="l sep">${nextFixtures(r.p.team, 5)}</td>
-    </tr>`).join("") || `<tr><td colspan="${cols.length}" class="l dim">No players match these filters.</td></tr>`}</tbody>`;
+    </tr>`).join("") || `<tr><td colspan="${cols.length}" class="l dim">${minm > mostMin
+      ? `No one matching these filters has ${minm}+ minutes in this window (the most is ${mostMin}). Lower Min minutes.`
+      : "No players match these filters."}</td></tr>`}</tbody>`;
   bindSort($("#pTable"), st, "players", () => renderPlayers(true), (k) => (k === "name" || k === "team" ? 1 : -1));
   $("#pTable").querySelectorAll("tr[data-pid]").forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("[data-tip].chip")) openPlayer(+tr.dataset.pid); }));
   $("#pMore").innerHTML = total > st.limit
@@ -430,6 +446,13 @@ function ensureShots() {
   });
   return shotsPromise;
 }
+/** A note when finished games in `gws` have no Understat data (it was down at the last update). */
+function usGapNote(gws) {
+  const miss = (D.meta.understat_missing || []).map((id) => D.fx[id]).filter((f) => f && gws.has(f.gw));
+  if (!miss.length) return "";
+  const gwList = [...new Set(miss.map((f) => f.gw))].sort((a, b) => a - b).map((g) => "GW" + g).join(", ");
+  return `<p class="note">Understat couldn't be reached at the last update, so ${miss.length} game${miss.length > 1 ? "s" : ""} (${gwList}) ${miss.length > 1 ? "are" : "is"} missing here. They're filled in at the next update that reaches it.</p>`;
+}
 const playerName = (id) => D.players.find((p) => p.id === id)?.name || "?";
 const shooterName = (s) => (s.p > 0 ? playerName(s.p) : D.shotMeta.names[-s.p - 1] || "?");
 const NICE = { MissedShots: "Missed", SavedShot: "Saved", BlockedShot: "Blocked", ShotOnPost: "Hit the post", Goal: "Goal",
@@ -504,7 +527,7 @@ async function renderShotSection(p) {
   if (!box) return;
   const shots = await ensureShots();
   if ($("#shotSec") !== box) return; // panel changed while loading
-  if (!shots) { box.innerHTML = `<p class="dim">Shot data isn't available (Understat couldn't be reached at the last update).</p>`; return; }
+  if (!shots || !D.meta.understat) { box.innerHTML = `<p class="dim">Shot data isn't available (Understat couldn't be reached at the last update).</p>`; return; }
   const st = store.get("shotmap", SM_DEF);
   const gws = windowGws({ win: st.win });
   let list = shots.filter((s) => gws.has(s.gw) && (st.kind === "taken" ? s.p === p.id : s.ast === p.id));
@@ -520,7 +543,7 @@ async function renderShotSection(p) {
     <div class="maps">
       <div class="chart"><h3>${st.kind === "taken" ? "Shots taken" : "Shots from this player's passes"} <span class="dim" style="font-weight:400">GW${span[0] ?? "–"}–${span.at(-1) ?? "–"}</span></h3>${MAP_LEGEND}${shotMap(list, { who: st.kind !== "taken" })}${shotSummary(list)}</div>
       <div class="chart"><h3>Starting positions</h3><div class="lg"><span>Number = games started there</span></div>${positionMap(rows)}</div>
-    </div>`;
+    </div>${usGapNote(gws)}`;
   bindControls(box, st, "shotmap", () => renderShotSection(p));
 }
 async function renderTeamShots(tid) {
@@ -528,13 +551,13 @@ async function renderTeamShots(tid) {
   if (!box) return;
   const shots = await ensureShots();
   if ($("#teamShots") !== box) return;
-  if (!shots) { box.innerHTML = `<p class="dim">Shot data isn't available.</p>`; return; }
+  if (!shots || !D.meta.understat) { box.innerHTML = `<p class="dim">Shot data isn't available (Understat couldn't be reached at the last update).</p>`; return; }
   const forS = shots.filter((s) => s.t === tid);
   const fxs = new Set(D.games[tid].map((g) => g.fx.id));
   const agS = shots.filter((s) => s.t !== tid && fxs.has(s.fx));
   box.innerHTML = `${MAP_LEGEND}<div class="maps">
       <div class="chart"><h3>Shots for</h3>${shotMap(forS)}${shotSummary(forS)}</div>
-      <div class="chart"><h3>Shots against</h3>${shotMap(agS)}${shotSummary(agS)}</div></div>`;
+      <div class="chart"><h3>Shots against</h3>${shotMap(agS)}${shotSummary(agS)}</div></div>${usGapNote(new Set(D.dataGws))}`;
 }
 
 // ---------------------------------------------------------------- TICKER

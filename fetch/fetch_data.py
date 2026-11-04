@@ -176,6 +176,7 @@ def main() -> None:
     print("understat ...")
     us = understat.fetch(int(first), boot, fixtures)
     us_rows = us["rows"] if us else {}
+    us_fx = set(us["fixtures"]) if us else set()
 
     # ---- players.json
     pos = {et["id"]: et["singular_name_short"] for et in boot["element_types"]}
@@ -209,6 +210,9 @@ def main() -> None:
         "events": [{"id": e["id"], "deadline": e["deadline_time"], "finished": e["finished"]}
                    for e in boot["events"]],
         "understat": bool(us),
+        # Finished fixtures without Understat data (Understat down or not updated yet)
+        "understat_missing": sorted(f["id"] for f in fixtures if (f["finished"] or f["finished_provisional"])
+                                    and f["id"] not in us_fx),
     }
 
     def write(name, obj):

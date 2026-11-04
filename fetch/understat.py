@@ -163,24 +163,50 @@ def map_teams(us_teams: dict, fpl_teams: list) -> dict:
     return out
 
 
+def league_from_cache(season_start: int) -> dict | None:
+    """Rebuild the season's team list and played matches from the cached match files."""
+    teams, dates = {}, []
+    for cfile in sorted(CACHE.glob("match_*.json")):
+        md = json.loads(cfile.read_text(encoding="utf-8"))
+        shots = (md.get("shots", {}).get("h") or []) + (md.get("shots", {}).get("a") or [])
+        if not shots or shots[0].get("season") != str(season_start):
+            continue
+        side = {}
+        for s in ("h", "a"):
+            r = next(iter((md.get("rosters", {}).get(s) or {}).values()), None)
+            if r is None:
+                break
+            side[s] = {"id": str(r["team_id"]), "title": shots[0][f"{s}_team"]}
+            teams[side[s]["id"]] = side[s]
+        if len(side) == 2:
+            dates.append({"id": cfile.stem.split("_")[1], "isResult": True, "datetime": shots[0]["date"], **side})
+    return {"teams": teams, "dates": dates} if dates else None
+
+
 def fetch(season_start: int, boot: dict, fixtures: list) -> dict | None:
-    """Return {"shots": [...], "rows": {fpl_id: [...]}, "names": [...], ...} or None if Understat is down."""
+    """Return {"shots": [...], "rows": {fpl_id: [...]}, "names": [...], ...}, or None if Understat is
+    down and nothing is cached. When it's down, the cached matches are used on their own."""
     t0 = time.time()
+    CACHE.mkdir(parents=True, exist_ok=True)
+    offline = False
     try:
         league = get(f"getLeagueData/EPL/{season_start}")
     except Exception as e:  # noqa: BLE001
-        print(f"  understat unavailable ({e}); shot data skipped", file=sys.stderr)
-        return None
+        league = league_from_cache(season_start)
+        if league is None:
+            print(f"  understat unavailable ({e}); shot data skipped", file=sys.stderr)
+            return None
+        offline = True
+        print(f"  understat unavailable ({e}); using {len(league['dates'])} cached matches", file=sys.stderr)
 
     team_map = map_teams(league["teams"], boot["teams"])
     fx_by_pair = {(x["team_h"], x["team_a"]): x["id"] for x in fixtures}
     overrides = json.loads(OVERRIDES.read_text(encoding="utf-8")) if OVERRIDES.exists() else {}
     matcher = PlayerMatcher(boot["elements"], overrides)
-    CACHE.mkdir(parents=True, exist_ok=True)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    shots_out, rows, names, name_idx = [], {}, [], {}
-    n_new = 0
+    shots_out, rows, names, name_idx, done_fx = [], {}, [], {}, []
+    n_new = n_failed = 0
     for m in league["dates"]:
         if not m.get("isResult"):
             continue
@@ -192,13 +218,21 @@ def fetch(season_start: int, boot: dict, fixtures: list) -> dict | None:
         cfile = CACHE / f"match_{m['id']}.json"
         if cfile.exists():
             md = json.loads(cfile.read_text(encoding="utf-8"))
+        elif offline:
+            continue
         else:
-            md = get(f"getMatchData/{m['id']}")
+            try:
+                md = get(f"getMatchData/{m['id']}")
+            except Exception as e:  # noqa: BLE001 - skip this match, keep the rest
+                print(f"  understat: match {m['id']} skipped ({e})", file=sys.stderr)
+                n_failed += 1
+                continue
             n_new += 1
             time.sleep(POLITE_DELAY)
             played = datetime.strptime(m["datetime"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
             if played < cutoff:
                 cfile.write_text(json.dumps(md), encoding="utf-8")
+        done_fx.append(fx)
 
         side_team = {"h": h, "a": a}
         # per-player per-match rows from the rosters
@@ -252,5 +286,7 @@ def fetch(season_start: int, boot: dict, fixtures: list) -> dict | None:
               f"{' …' if len(unmatched_with_time) > 15 else ''}")
         print(f"  add fixes to {OVERRIDES.name} as {{\"<understat id>\": <fpl id>}}; ids:",
               ", ".join(f"{k}={v[0]}" for k, v in list(matcher.unmatched.items())[:15]))
-    print(f"  understat: {len(shots_out)} shots, {n_new} matches downloaded, {time.time() - t0:.1f}s")
-    return {"shots": shots_out, "rows": rows, "names": names, "unmatched": len(unmatched_with_time)}
+    print(f"  understat: {len(shots_out)} shots, {n_new} matches downloaded"
+          f"{f', {n_failed} failed' if n_failed else ''}, {time.time() - t0:.1f}s")
+    return {"shots": shots_out, "rows": rows, "names": names, "unmatched": len(unmatched_with_time),
+            "fixtures": done_fx}
