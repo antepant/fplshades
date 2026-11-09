@@ -233,8 +233,9 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 }
 
 /* defcon hitters in the team panel */
-.dchit { display: inline-block; margin: 1px 12px 1px 0; white-space: nowrap; }
+.dchit, .who { display: inline-block; margin: 1px 12px 1px 0; white-space: nowrap; }
 .dchit .pos { width: auto; margin-right: 4px; }
+.gtable td, .gtable th { padding-left: 6px; padding-right: 6px; }
 
 /* plain schedule cells */
 td.sched { padding: 5px 8px; line-height: 1.25; }

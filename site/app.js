@@ -942,8 +942,137 @@ function openDcTeam(tid, st) {
   showPanel();
 }
 
+// ---------------------------------------------------------------- RESULTS
+// Every played game, newest first. Click one for each player's FPL stats in it.
+const R_DEF = { gw: 0, team: 0 };
+const POS_ORDER = { GKP: 0, DEF: 1, MID: 2, FWD: 3 };
+const G_COLS = [
+  { key: "min", label: "Min", title: "Minutes played" },
+  { key: "pts", label: "Pts", title: "FPL points" },
+  { key: "g", label: "G", title: "Goals", cls: "sep" },
+  { key: "a", label: "A", title: "Assists (FPL)" },
+  { key: "xg", label: "xG", title: "Expected goals", dec: 2 },
+  { key: "xa", label: "xA", title: "Expected assists", dec: 2 },
+  { key: "cs", label: "CS", title: "Clean sheet (60+ min)", cls: "sep" },
+  { key: "gc", label: "GC", title: "Goals conceded while on the pitch" },
+  { key: "xgc", label: "xGC", title: "Expected goals conceded while on the pitch", dec: 2 },
+  { key: "dc", label: "DC", title: "Defensive contributions (CBIT for DEF, CBIRT for MID/FWD)" },
+  { key: "dch", label: "DC hit", title: "Reached the defensive-contribution threshold (+2 pts)", tick: true },
+  { key: "sv", label: "Sv", title: "Saves" },
+  { key: "ps", label: "PS", title: "Penalties saved" },
+  { key: "pm", label: "PM", title: "Penalties missed" },
+  { key: "yc", label: "YC", title: "Yellow cards", cls: "sep" },
+  { key: "rc", label: "RC", title: "Red cards" },
+  { key: "og", label: "OG", title: "Own goals" },
+  { key: "bon", label: "Bon", title: "Bonus points", cls: "sep" },
+  { key: "bps", label: "BPS", title: "Bonus point system score" },
+];
+
+/** Every player's stat row in a fixture, keyed by fixture id. */
+function statsByFx() {
+  if (D.statsFx) return D.statsFx;
+  D.statsFx = {};
+  for (const p of D.players) {
+    for (const r of p.log) {
+      const s = Object.fromEntries(D.fields.map((k, i) => [k, r[i]]));
+      (D.statsFx[s.fx] ||= []).push({ p, s });
+    }
+  }
+  return D.statsFx;
+}
+const sideOf = (f, p) => (p.team === f.h ? "h" : p.team === f.a ? "a" : null);
+
+function topPerformers(f, n = 3) {
+  const rows = [...(statsByFx()[f.id] || [])].sort((x, y) => y.s.pts - x.s.pts || y.s.bps - x.s.bps).slice(0, n);
+  return rows.map(({ p, s }) => {
+    const bits = [s.g && `${s.g} G`, s.a && `${s.a} A`, s.cs && "clean sheet", s.dch && "DC", s.sv >= 3 && `${s.sv} saves`, s.bon && `${s.bon} bonus`].filter(Boolean);
+    const t = `${p.name} (${D.team[p.team].short}, ${p.pos}): ${s.pts} pts in ${s.min} min${bits.length ? "<br>" + bits.join(" · ") : ""}`;
+    return `<span class="who" data-tip="${esc(t)}">${esc(p.name)} <b>${s.pts}</b></span>`;
+  }).join("");
+}
+
+function renderResults() {
+  const st = store.get("results", R_DEF);
+  const played = D.fixtures.filter((f) => f.gw && (f.fin || f.live)).sort((a, b) => b.ko.localeCompare(a.ko));
+  const rows = played.filter((f) => (!st.gw || f.gw === st.gw) && (!st.team || f.h === st.team || f.a === st.team));
+  const gwOpts = [[0, "All gameweeks"], ...[...new Set(played.map((f) => f.gw))].sort((a, b) => b - a).map((g) => [g, "GW" + g])];
+  const teamOpts = [[0, "All teams"], ...[...D.teams].sort((a, b) => a.name.localeCompare(b.name)).map((t) => [t.id, t.name])];
+  const name = (id, won) => `<span class="${won ? "pname" : ""}">${esc(D.team[id].name)}</span>`;
+  const main = $("#main");
+  main.innerHTML = `
+    <h1>Results</h1>
+    <p class="lede">Every game played so far, newest first, with team xG and the top FPL scorers. Click a game for every player's stats in it.</p>
+    <div class="controls">
+      <div class="ctl"><span class="lbl">Gameweek</span>${selectEl("gw", gwOpts, st.gw)}</div>
+      <div class="ctl"><span class="lbl">Team</span>${selectEl("team", teamOpts, st.team)}</div>
+    </div>
+    <div class="tablewrap"><table class="grid" id="rTable">
+      <thead><tr><th class="l">Kick-off</th><th>GW</th><th>Home</th><th data-tip="Home team's xG (sum of its players' xG)">xG</th><th class="c">Score</th><th class="l" data-tip="Away team's xG">xG</th><th class="l">Away</th><th class="l sep" data-tip="Top 3 FPL points scorers in the game">Top performers</th></tr></thead>
+      <tbody>${rows.map((f) => `<tr class="click" data-fx="${f.id}">
+        <td class="l">${fmtDate(f.ko)} <span class="dim">${fmtTime(f.ko)}</span></td>
+        <td>${f.gw}</td>
+        <td>${name(f.h, f.hs > f.as)}</td>
+        <td class="dim">${f2(f.xh)}</td>
+        <td class="c"><b>${f.hs ?? "–"}–${f.as ?? "–"}</b>${f.live ? ` <span class="flag warn">LIVE</span>` : ""}</td>
+        <td class="l dim">${f2(f.xa)}</td>
+        <td class="l">${name(f.a, f.as > f.hs)}</td>
+        <td class="l sep">${topPerformers(f)}</td>
+      </tr>`).join("") || `<tr><td colspan="8" class="l dim">No games played${st.gw || st.team ? " for these filters" : " yet"}.</td></tr>`}</tbody>
+    </table></div>
+    <p class="note">Team xG is the sum of the players' FPL xG, so players who have since left a club are missing from it. Live games show the latest FPL data.</p>`;
+  bindControls(main, st, "results", renderResults);
+  main.querySelectorAll("tr[data-fx]").forEach((tr) => tr.addEventListener("click", () => openGame(+tr.dataset.fx)));
+}
+
+const GM_DEF = { sort: "pos", dir: 1 };
+function openGame(fid) {
+  const f = D.fx[fid];
+  const st = store.get("game", GM_DEF);
+  if (st.sort !== "pos" && !G_COLS.some((c) => c.key === st.sort)) Object.assign(st, GM_DEF);
+  const all = statsByFx()[fid] || [];
+  // "pos": goalkeeper → forwards, starters before subs within a position
+  const kv = (x) => (st.sort === "pos" ? POS_ORDER[x.p.pos] * 2 + (x.s.st ? 0 : 1) : x.s[st.sort]);
+  const sorted = (side) => all.filter((x) => sideOf(f, x.p) === side)
+    .sort((a, b) => (kv(a) - kv(b)) * st.dir || b.s.min - a.s.min);
+  const val = (c, v) => (c.tick ? (v ? "✓" : `<span class="dim">–</span>`) : v === 0 ? `<span class="dim">0</span>` : c.dec ? v.toFixed(c.dec) : v);
+  const table = (title, list) => `<div class="psec"><h3>${title}</h3><div class="tablewrap"><table class="grid gtable">
+      <thead><tr>${sortHeader([{ key: "pos", label: "Player", cls: "l", title: "Sort by position, starters first" }, ...G_COLS], st)}</tr></thead>
+      <tbody>${list.map((x) => `<tr class="click" data-pid="${x.p.id}">
+        <td class="l"><span class="pos">${x.p.pos}</span><span class="pname">${esc(x.p.name)}</span>${x.s.st ? "" : ` <span class="dim" data-tip="Came off the bench">sub</span>`}</td>
+        ${G_COLS.map((c) => `<td class="${c.cls || ""}">${val(c, x.s[c.key])}</td>`).join("")}</tr>`).join("")
+        || `<tr><td class="l dim" colspan="${G_COLS.length + 1}">No player data.</td></tr>`}</tbody>
+    </table></div></div>`;
+  const moved = all.filter((x) => !sideOf(f, x.p));
+  $("#panelBody").innerHTML = `
+    <div class="phead"><div><h2>${esc(D.team[f.h].name)} ${f.hs ?? "–"}–${f.as ?? "–"} ${esc(D.team[f.a].name)}</h2>
+      <div class="facts"><span>GW${f.gw}</span><span>${fmtDate(f.ko)} ${fmtTime(f.ko)}</span>${f.xh != null ? `<span>xG <b>${f2(f.xh)}</b>–<b>${f2(f.xa)}</b></span>` : ""}${f.live ? `<span class="flag warn">LIVE</span>` : ""}</div></div>
+      <button class="x" type="button" aria-label="Close">×</button></div>
+    ${table(esc(D.team[f.h].name), sorted("h"))}
+    ${table(esc(D.team[f.a].name), sorted("a"))}
+    ${moved.length ? `<p class="note">Also played, for a club they've since left: ${moved.map((x) => `${esc(x.p.name)} (${x.s.min} min, ${x.s.pts} pts)`).join(", ")}.</p>` : ""}
+    <div class="psec"><h3>Shot maps</h3><div id="gameShots"><p class="dim">Loading…</p></div></div>`;
+  $("#panelBody").querySelectorAll(".gtable").forEach((t) => bindSort(t, st, "game", () => { const y = $("#panel").scrollTop; openGame(fid); $("#panel").scrollTop = y; }, (k) => (k === "pos" ? 1 : -1)));
+  $("#panelBody").querySelectorAll("tr[data-pid]").forEach((tr) => tr.addEventListener("click", () => openPlayer(+tr.dataset.pid)));
+  showPanel();
+  renderGameShots(f);
+}
+async function renderGameShots(f) {
+  const box = $("#gameShots");
+  if (!box) return;
+  const shots = await ensureShots();
+  if ($("#gameShots") !== box) return;
+  if (!shots || !D.meta.understat || (D.meta.understat_missing || []).includes(f.id)) {
+    box.innerHTML = `<p class="dim">No Understat data for this game yet${f.fin ? " (it's added at the next update that reaches Understat)" : ""}.</p>`;
+    return;
+  }
+  const side = (t) => shots.filter((s) => s.fx === f.id && s.t === t);
+  box.innerHTML = `${MAP_LEGEND}<div class="maps">
+    <div class="chart"><h3>${esc(D.team[f.h].name)}</h3>${shotMap(side(f.h))}${shotSummary(side(f.h))}</div>
+    <div class="chart"><h3>${esc(D.team[f.a].name)}</h3>${shotMap(side(f.a))}${shotSummary(side(f.a))}</div></div>`;
+}
+
 // ---------------------------------------------------------------- router & boot
-const VIEWS = { players: renderPlayers, ticker: renderTicker, schedule: renderSchedule, teams: renderTeams, defcons: renderDefcons };
+const VIEWS = { players: renderPlayers, ticker: renderTicker, schedule: renderSchedule, teams: renderTeams, results: renderResults, defcons: renderDefcons };
 function route() {
   const v = location.hash.slice(1) in VIEWS ? location.hash.slice(1) : "players";
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === v));
